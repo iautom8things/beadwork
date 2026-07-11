@@ -243,6 +243,27 @@ types:
 	}
 }
 
+func TestSignalTypesPlainOutputContract(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	writeCmdSignals(t, env.Dir, `
+types:
+  verify:
+    fields: {}
+  audit:
+    fields: {}
+  completed:
+    fields: {}
+`)
+	var buf bytes.Buffer
+	if _, err := cmdSignal(env.Store, []string{"types"}, PlainWriter(&buf), nil); err != nil {
+		t.Fatalf("cmdSignal types: %v", err)
+	}
+	if got, want := buf.String(), "audit\ncompleted\nverify\n"; got != want {
+		t.Fatalf("plain types output = %q, want %q", got, want)
+	}
+}
+
 func TestSignalTypesJSON(t *testing.T) {
 	env := testutil.NewEnv(t)
 	defer env.Cleanup()
@@ -330,7 +351,7 @@ func TestSignalValidateNeverStores(t *testing.T) {
 	defer env.Cleanup()
 	hook := writeHook(t, env.Dir, "enrich", `#!/bin/sh
 cat >/dev/null
-printf '{"phase":"PASS"}'
+printf '{"phase":"PASS","stamp":"enriched"}'
 `)
 	writeCmdSignals(t, env.Dir, `
 types:
@@ -340,6 +361,8 @@ types:
         type: enum
         values: [PASS, FAIL]
         required: true
+      stamp:
+        type: string
     hooks:
       enrich: `+hook+`
 `)
@@ -351,6 +374,9 @@ types:
 		if _, err := cmdSignal(env.Store, args, PlainWriter(&buf), nil); err != nil {
 			t.Fatalf("cmdSignal %v: %v\n%s", args, err, buf.String())
 		}
+		if hasRunHooks(args) && !strings.Contains(buf.String(), `"stamp":"enriched"`) {
+			t.Fatalf("dry-run report missing enriched payload stamp:\n%s", buf.String())
+		}
 		records, err := env.Store.SignalsForTicket("test-x")
 		if err != nil {
 			t.Fatalf("SignalsForTicket: %v", err)
@@ -358,6 +384,44 @@ types:
 		if len(records) != 0 {
 			t.Fatalf("validate %v stored records: %#v", args, records)
 		}
+	}
+}
+
+func TestSignalValidateRunHooksSuppressesPostEmit(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	postEmitMarker := filepath.Join(env.Dir, "post-emit-marker")
+	postEmit := writeHook(t, env.Dir, "post-emit", `#!/bin/sh
+cat >/dev/null
+echo fired > '`+postEmitMarker+`'
+`)
+	writeCmdSignals(t, env.Dir, `
+types:
+  verify:
+    fields:
+      phase:
+        type: enum
+        values: [PASS, FAIL]
+        required: true
+    hooks:
+      post-emit: `+postEmit+`
+`)
+	var buf bytes.Buffer
+	if _, err := cmdSignal(env.Store, []string{"validate", "verify", "--field", "phase=PASS", "--run-hooks"}, PlainWriter(&buf), nil); err != nil {
+		t.Fatalf("validate --run-hooks: %v\n%s", err, buf.String())
+	}
+	if !strings.Contains(buf.String(), "gate: ALLOWED") {
+		t.Fatalf("allowed dry-run report missing gate verdict:\n%s", buf.String())
+	}
+	if _, err := os.Stat(postEmitMarker); !os.IsNotExist(err) {
+		t.Fatalf("post-emit fired during dry-run, stat err=%v", err)
+	}
+	records, err := env.Store.SignalsForTicket("test-x")
+	if err != nil {
+		t.Fatalf("SignalsForTicket: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("dry-run allowed validate stored records: %#v", records)
 	}
 }
 
@@ -476,4 +540,13 @@ func writeHook(t *testing.T, dir, name, body string) string {
 		t.Fatalf("WriteFile hook: %v", err)
 	}
 	return path
+}
+
+func hasRunHooks(args []string) bool {
+	for _, arg := range args {
+		if arg == "--run-hooks" {
+			return true
+		}
+	}
+	return false
 }
