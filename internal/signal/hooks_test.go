@@ -94,6 +94,33 @@ func TestHookTimeoutKilled(t *testing.T) {
 	}
 }
 
+func TestHookCallerCWDEnv(t *testing.T) {
+	root, caller := t.TempDir(), t.TempDir()
+	captured := filepath.Join(t.TempDir(), "env")
+	h := hook(t, "echo \"pwd=$(pwd) caller=${BW_SIGNAL_CALLER_CWD-unset}\" > '"+captured+"'; cat >/dev/null")
+	typ := &signal.Type{Name: "x", Hooks: signal.Hooks{Gate: []string{h}}}
+	cfg := &signal.Config{HookTimeout: time.Second}
+	p := pipeline(root, cfg, typ)
+	p.CallerCWD = caller
+	if _, _, err := p.Run(map[string]any{}, func(m map[string]any) (map[string]any, error) { return m, nil }, func(map[string]any) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.TrimSpace(string(read(t, captured)))
+	if want := "pwd=" + realRoot + " caller=" + caller; got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	if _, _, err := pipeline(root, cfg, typ).Run(map[string]any{}, func(m map[string]any) (map[string]any, error) { return m, nil }, func(map[string]any) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(read(t, captured))); !strings.HasSuffix(got, "caller=unset") {
+		t.Fatalf("empty CallerCWD should leave env unset, got %q", got)
+	}
+}
+
 func read(t *testing.T, p string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(p)

@@ -76,8 +76,13 @@ independently optional, as are all other moments. `hook_timeout` is a positive G
 duration and defaults to `30s`.
 
 Each hook inherits the parent environment, runs with the repository root as its
-working directory, and receives `BW_SIGNAL_TYPE`, `BW_SIGNAL_TICKET`, and
-`BW_SIGNAL_MOMENT`. Its stdin is the JSON signal (`type`, `ticket`, and `payload`)
+working directory, and receives `BW_SIGNAL_TYPE`, `BW_SIGNAL_TICKET`,
+`BW_SIGNAL_MOMENT`, and `BW_SIGNAL_CALLER_CWD` — the directory the emitting
+command was invoked from. In a linked worktree the repository root resolves to
+the primary checkout, so a gate that verifies the emitted tree (compile, test,
+ancestry against `HEAD`) must `cd "$BW_SIGNAL_CALLER_CWD"` first; the hook's
+own working directory stays the repository root so relative hook paths resolve
+consistently. Its stdin is the JSON signal (`type`, `ticket`, and `payload`)
 and is closed after the record is written. stdout and stderr are captured, never
 connected to the terminal. Enrich stdout on exit 0 is either empty (no change) or
 a JSON object replacing the payload. The replacement is schema-validated before

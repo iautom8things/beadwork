@@ -59,6 +59,10 @@ decisions:
   statement: Each hook shall run under a configurable timeout (default 30s) with captured stdout/stderr and no TTY access, so a hanging or prompting hook is killed and classified as a malfunction rather than hanging bw.
   priority: must
   stability: stable
+- id: bw.signal.pipeline.caller_cwd_env
+  statement: Every hook shall receive BW_SIGNAL_CALLER_CWD set to the directory the emitting command was invoked from, while the hook's own working directory remains the repository root.
+  priority: must
+  stability: stable
 ```
 
 ## Scenarios
@@ -128,6 +132,17 @@ decisions:
   covers:
     - bw.signal.pipeline.unskippable
     - bw.signal.pipeline.optional_moments_and_scopes
+- id: bw.signal.pipeline.worktree_gate_sees_emitting_tree
+  given:
+    - a repo whose primary checkout is on main with a linked worktree on a feature branch
+    - a gate that reads BW_SIGNAL_CALLER_CWD
+  when:
+    - bw signal emit runs from inside the linked worktree
+  then:
+    - the gate's own cwd is the primary checkout root
+    - BW_SIGNAL_CALLER_CWD is the worktree path, so cd-ing there lets the gate verify the emitted tree
+  covers:
+    - bw.signal.pipeline.caller_cwd_env
 - id: bw.signal.pipeline.on_blocked_crash_isolated
   given:
     - a gate that blocks (exit 1) and an on-blocked hook that itself crashes
@@ -189,4 +204,9 @@ decisions:
   execute: true
   covers:
     - bw.signal.pipeline.unskippable
+- kind: command
+  target: go test ./internal/signal/ -run TestHookCallerCWDEnv
+  execute: true
+  covers:
+    - bw.signal.pipeline.caller_cwd_env
 ```

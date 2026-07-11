@@ -166,7 +166,7 @@ func cmdSignalEmit(store *issue.Store, a SignalArgs, w Writer) (*config.Config, 
 	}
 	var path string
 	r := store.Committer.(*repo.Repo)
-	pipeline := signalcfg.Pipeline{RepoRoot: r.RepoDir(), Config: cfg, Type: typ, Ticket: a.TicketID}
+	pipeline := signalcfg.Pipeline{RepoRoot: r.RepoDir(), CallerCWD: r.CWD, Config: cfg, Type: typ, Ticket: a.TicketID}
 	var warnings []error
 	_, warnings, err = pipeline.Run(payload,
 		func(p map[string]any) (map[string]any, error) { return signalcfg.ValidatePayload(*typ, p) },
@@ -261,7 +261,7 @@ func cmdSignalValidate(store *issue.Store, a SignalArgs, w Writer) (*config.Conf
 		return nil, err
 	}
 	r := store.Committer.(*repo.Repo)
-	result, err := (signalcfg.Pipeline{RepoRoot: r.RepoDir(), Config: cfg, Type: typ}).DryRun(payload,
+	result, err := (signalcfg.Pipeline{RepoRoot: r.RepoDir(), CallerCWD: r.CWD, Config: cfg, Type: typ}).DryRun(payload,
 		func(p map[string]any) (map[string]any, error) { return signalcfg.ValidatePayload(*typ, p) })
 	printSignalDryRunReport(w, result)
 	return nil, err

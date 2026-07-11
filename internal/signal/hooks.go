@@ -19,10 +19,11 @@ func (e HookError) Error() string { return fmt.Sprintf("%s: hook %s: %s", e.Kind
 
 // Pipeline executes configured signal hooks once around validation and storage.
 type Pipeline struct {
-	RepoRoot string
-	Config   *Config
-	Type     *Type
-	Ticket   string
+	RepoRoot  string
+	CallerCWD string // directory the emitting command was invoked from (e.g. a linked worktree)
+	Config    *Config
+	Type      *Type
+	Ticket    string
 }
 
 type hookRecord struct {
@@ -141,6 +142,9 @@ func (p Pipeline) runWithEnv(h, moment string, payload map[string]any, extraEnv 
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Dir = p.RepoRoot
 	cmd.Env = append(os.Environ(), "BW_SIGNAL_TYPE="+p.Type.Name, "BW_SIGNAL_TICKET="+p.Ticket, "BW_SIGNAL_MOMENT="+moment)
+	if p.CallerCWD != "" {
+		cmd.Env = append(cmd.Env, "BW_SIGNAL_CALLER_CWD="+p.CallerCWD)
+	}
 	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdin = bytes.NewReader(append(b, '\n'))
 	cmd.Stdout, cmd.Stderr = &result.stdout, &result.stderr

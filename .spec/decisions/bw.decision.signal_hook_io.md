@@ -18,9 +18,12 @@ invariant).
 ## Decision
 
 - The signal record is written to the hook's stdin as JSON, then stdin is closed.
-  `BW_SIGNAL_TYPE`, `BW_SIGNAL_TICKET`, `BW_SIGNAL_MOMENT` ride the environment as
+  `BW_SIGNAL_TYPE`, `BW_SIGNAL_TICKET`, `BW_SIGNAL_MOMENT`, and
+  `BW_SIGNAL_CALLER_CWD` (the invocation directory) ride the environment as
   convenience scalars; the parent environment is inherited (the attribution pattern
-  reads spawner-controlled vars). CWD is the repo root.
+  reads spawner-controlled vars). CWD is the repo root — which in a linked
+  worktree is the primary checkout, not the emitting tree — so tree-verifying
+  gates `cd "$BW_SIGNAL_CALLER_CWD"` themselves.
 - Enrich: exit 0 + JSON object on stdout replaces the payload; exit 0 + empty stdout
   leaves it unchanged; non-zero exit or non-JSON stdout is a malfunction.
 - Gate: exit 0 allows; exit 1 is a deliberate block (stdout+stderr become the refusal
