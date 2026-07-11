@@ -3,18 +3,31 @@ package signal
 import (
 	"fmt"
 	"sort"
+	"time"
 )
 
 // Config is the repo-local signal type configuration loaded from
 // .beadwork/signals.yml in the working tree.
 type Config struct {
-	Types []Type
+	Types       []Type
+	Hooks       Hooks
+	HookTimeout time.Duration
 }
 
 // Type describes one repo-defined signal type.
 type Type struct {
 	Name   string
 	Fields []Field
+	Hooks  Hooks
+}
+
+// Hooks contains executable hook commands for each signal lifecycle moment.
+// Commands are executed directly (without a shell) in declaration order.
+type Hooks struct {
+	Enrich    []string
+	Gate      []string
+	OnBlocked []string
+	PostEmit  []string
 }
 
 // Field describes one payload field in a signal type schema.

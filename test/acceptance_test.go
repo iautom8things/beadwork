@@ -367,6 +367,57 @@ func TestSignalAdditivityDormantRepo(t *testing.T) {
 	}
 }
 
+func TestSignalGateBlocks(t *testing.T) {
+	env := newBwEnv(t)
+	blocked := filepath.Join(env.dir, "blocked")
+	gate := writeSignalHook(t, env.dir, "gate", "echo red tests; exit 1")
+	onBlocked := writeSignalHook(t, env.dir, "blocked-hook", "echo fired > '"+blocked+"'")
+	env.writeSignals("types:\n  verify:\n    hooks:\n      gate: " + gate + "\n      on-blocked: " + onBlocked + "\n")
+	out := env.bwFail("signal", "emit", "test-x", "verify")
+	if !strings.Contains(out, "BLOCKED") || !strings.Contains(out, "red tests") {
+		t.Fatalf("output=%q", out)
+	}
+	if _, err := os.Stat(blocked); err != nil {
+		t.Fatalf("on-blocked: %v", err)
+	}
+	if got := env.git("ls-tree", "-r", "--name-only", "beadwork"); strings.Contains(got, "signals/test-x/") {
+		t.Fatalf("stored blocked signal: %s", got)
+	}
+}
+
+func TestSignalHookMalfunction(t *testing.T) {
+	env := newBwEnv(t)
+	gate := writeSignalHook(t, env.dir, "gate", "sleep 999")
+	env.writeSignals("hook_timeout: 20ms\ntypes:\n  verify:\n    hooks:\n      gate: " + gate + "\n")
+	start := time.Now()
+	out := env.bwFail("signal", "emit", "test-x", "verify")
+	if !strings.Contains(out, "MALFUNCTION") || time.Since(start) > time.Second {
+		t.Fatalf("output=%q elapsed=%v", out, time.Since(start))
+	}
+}
+
+func TestSignalPostEmitWarning(t *testing.T) {
+	env := newBwEnv(t)
+	post := writeSignalHook(t, env.dir, "post", "echo notify-failed >&2; exit 1")
+	env.writeSignals("types:\n  verify:\n    hooks:\n      post-emit: " + post + "\n")
+	out := env.bw("signal", "emit", "test-x", "verify")
+	if !strings.Contains(out, "WARNING") {
+		t.Fatalf("output=%q", out)
+	}
+	if got := env.git("ls-tree", "-r", "--name-only", "beadwork"); !strings.Contains(got, "signals/test-x/0001.json") {
+		t.Fatalf("not stored: %s", got)
+	}
+}
+
+func writeSignalHook(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 // recapCursor reads the recap cursor ref from the git dir.
 func (e *bwEnv) recapCursor() string {
 	e.t.Helper()

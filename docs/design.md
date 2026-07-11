@@ -68,8 +68,30 @@ record, so retrying after a ref-CAS conflict takes the next available number.
 Signal type definitions are read from `.beadwork/signals.yml` in the repository
 working tree, never from the beadwork branch. Repos without that file have no
 defined signal types; malformed config fails closed with a `CONFIG ERROR`.
-`bw signal emit` validates the final payload against the configured type schema
-before storing anything. This stage does not execute hooks.
+`bw signal emit` always runs the configured hook pipeline. Repo-global hooks live
+under top-level `hooks`; a type's hooks live below that type. Commands may be a
+single executable path or a list. Global enrich hooks run before type enrich
+hooks; type gate hooks run before global gates. `on-blocked` and `post-emit` are
+independently optional, as are all other moments. `hook_timeout` is a positive Go
+duration and defaults to `30s`.
+
+Each hook inherits the parent environment, runs with the repository root as its
+working directory, and receives `BW_SIGNAL_TYPE`, `BW_SIGNAL_TICKET`, and
+`BW_SIGNAL_MOMENT`. Its stdin is the JSON signal (`type`, `ticket`, and `payload`)
+and is closed after the record is written. stdout and stderr are captured, never
+connected to the terminal. Enrich stdout on exit 0 is either empty (no change) or
+a JSON object replacing the payload. The replacement is schema-validated before
+any gate or store operation.
+
+| Exit/result | Enrich | Gate | on-blocked / post-emit |
+| --- | --- | --- | --- |
+| 0 | allow; JSON stdout replaces payload | allow | success |
+| 1 | MALFUNCTION | BLOCKED; combined output is the reason | isolated failure / WARNING |
+| 2+, signal, timeout | MALFUNCTION | MALFUNCTION | isolated failure / WARNING |
+
+BLOCKED runs `on-blocked`; MALFUNCTION does not. Both fail closed before storage.
+Hooks run once outside ref-CAS retries. After durable storage, post-emit failures
+print a warning but do not turn a successful emit into a failure.
 
 ## Sync
 

@@ -145,48 +145,48 @@ decisions:
 ```yaml spec-verification
 - kind: command
   target: go test ./internal/signal/ -run TestPipelineEmitSequence
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.emit_sequence
     - bw.signal.pipeline.optional_moments_and_scopes
 - kind: command
   target: go test ./internal/signal/ -run TestHookStdinJSONContract
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.stdin_json_io
 - kind: command
   target: go test ./test/ -run TestSignalGateBlocks
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.gate_block_refuses
 - kind: command
   target: go test ./test/ -run TestSignalHookMalfunction
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.malfunction_fails_closed
 - kind: command
   target: go test ./internal/signal/ -run TestOnBlockedFailureIsolated
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.on_blocked_isolated
 - kind: command
   target: go test ./test/ -run TestSignalPostEmitWarning
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.post_emit_after_store
 - kind: command
   target: go test ./cmd/bw/ -run TestSignalHooksRunOnceUnderRetry
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.hooks_once_outside_retry
 - kind: command
   target: go test ./internal/signal/ -run TestHookTimeoutKilled
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.never_hang
 - kind: command
   target: go test ./cmd/bw/ -run TestSignalEmitNoBypassFlag
-  execute: false
+  execute: true
   covers:
     - bw.signal.pipeline.unskippable
 ```

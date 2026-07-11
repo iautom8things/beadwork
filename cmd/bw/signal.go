@@ -10,6 +10,15 @@ import (
 	signalcfg "github.com/jallum/beadwork/internal/signal"
 )
 
+func init() {
+	for i := range commands {
+		if commands[i].Name == "signal" {
+			commands[i].Description += " Emission always runs the configured enrich, validation, gate, and post-emit pipeline; there is no bypass flag."
+			break
+		}
+	}
+}
+
 // SignalArgs holds parsed `bw signal` arguments.
 type SignalArgs struct {
 	Subcommand string
@@ -73,8 +82,7 @@ func cmdSignal(store *issue.Store, args []string, w Writer, _ *config.Config) (*
 	}
 }
 
-// cmdSignalEmit validates against working-tree config and stores the signal.
-// Hooks are intentionally absent in this stage.
+// cmdSignalEmit runs the unskippable hook pipeline and stores the signal.
 func cmdSignalEmit(store *issue.Store, a SignalArgs, w Writer) (*config.Config, error) {
 	cfg, err := loadSignalConfig(store)
 	if err != nil {
@@ -91,20 +99,25 @@ func cmdSignalEmit(store *issue.Store, a SignalArgs, w Writer) (*config.Config, 
 	for k, v := range a.Fields {
 		payload[k] = v
 	}
-	payload, err = signalcfg.ValidatePayload(*typ, payload)
-	if err != nil {
-		return nil, err
-	}
-
 	var path string
-	err = commitWithRetry(store, commitMaxRetries, func() (string, error) {
-		var serr error
-		_, path, serr = store.EmitSignal(a.TicketID, a.Type, payload)
-		if serr != nil {
-			return "", serr
-		}
-		return fmt.Sprintf("signal %s %s %s", a.TicketID, a.Type, path), nil
-	})
+	r := store.Committer.(*repo.Repo)
+	pipeline := signalcfg.Pipeline{RepoRoot: r.RepoDir(), Config: cfg, Type: typ, Ticket: a.TicketID}
+	var warnings []error
+	_, warnings, err = pipeline.Run(payload,
+		func(p map[string]any) (map[string]any, error) { return signalcfg.ValidatePayload(*typ, p) },
+		func(p map[string]any) error {
+			return commitWithRetry(store, commitMaxRetries, func() (string, error) {
+				var serr error
+				_, path, serr = store.EmitSignal(a.TicketID, a.Type, p)
+				if serr != nil {
+					return "", serr
+				}
+				return fmt.Sprintf("signal %s %s %s", a.TicketID, a.Type, path), nil
+			})
+		})
+	for _, warning := range warnings {
+		fmt.Fprintf(w, "WARNING: %v\n", warning)
+	}
 	if err != nil {
 		return nil, err
 	}

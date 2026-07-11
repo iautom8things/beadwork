@@ -6,8 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jallum/beadwork/internal/signal"
 	"github.com/jallum/beadwork/internal/testutil"
+	"github.com/jallum/beadwork/internal/treefs"
 )
 
 func TestSignalEmitUndefinedTypeRefused(t *testing.T) {
@@ -111,5 +114,74 @@ func writeCmdSignals(t *testing.T, dir, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(path, "signals.yml"), []byte(content), 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
+	}
+}
+
+func TestSignalEmitNoBypassFlag(t *testing.T) {
+	for _, flag := range []string{"--no-hooks", "--skip-hooks", "--force"} {
+		_, err := parseSignalArgs([]string{"emit", "test-x", "verify", flag})
+		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+			t.Fatalf("flag %s: %v", flag, err)
+		}
+	}
+}
+
+func TestSignalEmitHelpMentionsPipeline(t *testing.T) {
+	for _, command := range commands {
+		if command.Name == "signal" {
+			if !strings.Contains(command.Description, "pipeline") || !strings.Contains(command.Description, "no bypass") {
+				t.Fatalf("description=%q", command.Description)
+			}
+			return
+		}
+	}
+	t.Fatal("signal command missing")
+}
+
+func TestSignalHooksRunOnceUnderRetry(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	count := filepath.Join(env.Dir, "count")
+	hook := filepath.Join(env.Dir, "hook")
+	body := "#!/bin/sh\necho x >> '" + count + "'\ncat >/dev/null\n"
+	if err := os.WriteFile(hook, []byte(body), 0755); err != nil {
+		t.Fatal(err)
+	}
+	typ := &signal.Type{Name: "verify", Hooks: signal.Hooks{Gate: []string{hook}}}
+	cfg := &signal.Config{HookTimeout: time.Second}
+	racer, err := treefs.Open(env.Dir, "refs/heads/beadwork")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	_, _, err = (signal.Pipeline{RepoRoot: env.Dir, Config: cfg, Type: typ, Ticket: "test-x"}).Run(map[string]any{}, func(p map[string]any) (map[string]any, error) { return p, nil }, func(p map[string]any) error {
+		return commitWithRetry(env.Store, 3, func() (string, error) {
+			attempts++
+			if _, _, err := env.Store.EmitSignal("test-x", "verify", p); err != nil {
+				return "", err
+			}
+			if attempts == 1 {
+				if err := racer.WriteFile("racer", []byte("x")); err != nil {
+					return "", err
+				}
+				if err := racer.Commit("racer"); err != nil {
+					return "", err
+				}
+			}
+			return "signal test-x verify signals/test-x/0001.json", nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts < 2 {
+		t.Fatalf("attempts=%d", attempts)
+	}
+	b, err := os.ReadFile(count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(strings.Fields(string(b))); got != 1 {
+		t.Fatalf("hook calls=%d", got)
 	}
 }

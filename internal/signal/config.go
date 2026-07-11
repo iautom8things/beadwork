@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -50,6 +51,8 @@ func Parse(data []byte) (*Config, error) {
 	}
 	top := root.Content[0]
 	var typesNode *yaml.Node
+	var hooksNode *yaml.Node
+	var timeoutNode *yaml.Node
 	seenTop := map[string]bool{}
 	for i := 0; i < len(top.Content); i += 2 {
 		key := top.Content[i].Value
@@ -59,17 +62,36 @@ func Parse(data []byte) (*Config, error) {
 		seenTop[key] = true
 		if key == "types" {
 			typesNode = top.Content[i+1]
+		} else if key == "hooks" {
+			hooksNode = top.Content[i+1]
+		} else if key == "hook_timeout" {
+			timeoutNode = top.Content[i+1]
 		}
 	}
+	cfg := &Config{HookTimeout: 30 * time.Second}
+	if hooksNode != nil {
+		var err error
+		cfg.Hooks, err = parseHooks(hooksNode)
+		if err != nil {
+			return nil, fmt.Errorf("hooks: %w", err)
+		}
+	}
+	if timeoutNode != nil {
+		d, err := time.ParseDuration(timeoutNode.Value)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("hook_timeout must be a positive duration")
+		}
+		cfg.HookTimeout = d
+	}
 	if typesNode == nil {
-		return &Config{}, nil
+		return cfg, nil
 	}
 
 	types, err := parseTypes(typesNode)
 	if err != nil {
 		return nil, err
 	}
-	cfg := &Config{Types: types}
+	cfg.Types = types
 	seenTypes := make(map[string]bool, len(types))
 	for _, typ := range cfg.Types {
 		if seenTypes[typ.Name] {
@@ -126,9 +148,9 @@ func parseTypes(n *yaml.Node) ([]Type, error) {
 }
 
 type rawType struct {
-	Name   string         `yaml:"name"`
-	Fields yaml.Node      `yaml:"fields"`
-	Hooks  map[string]any `yaml:"hooks"`
+	Name   string    `yaml:"name"`
+	Fields yaml.Node `yaml:"fields"`
+	Hooks  yaml.Node `yaml:"hooks"`
 }
 
 type rawField struct {
@@ -146,6 +168,13 @@ type rawRequiredWhen struct {
 
 func (rt rawType) toType() (Type, error) {
 	typ := Type{Name: rt.Name}
+	if rt.Hooks.Kind != 0 {
+		var err error
+		typ.Hooks, err = parseHooks(&rt.Hooks)
+		if err != nil {
+			return Type{}, fmt.Errorf("type %s hooks: %w", rt.Name, err)
+		}
+	}
 	if rt.Fields.Kind == 0 {
 		return typ, nil
 	}
@@ -155,6 +184,59 @@ func (rt rawType) toType() (Type, error) {
 	}
 	typ.Fields = fields
 	return typ, nil
+}
+
+func parseHooks(n *yaml.Node) (Hooks, error) {
+	if n.Kind != yaml.MappingNode {
+		return Hooks{}, fmt.Errorf("must be a mapping")
+	}
+	var h Hooks
+	seen := map[string]bool{}
+	for i := 0; i < len(n.Content); i += 2 {
+		name := n.Content[i].Value
+		if seen[name] {
+			return Hooks{}, fmt.Errorf("duplicate moment %s", name)
+		}
+		seen[name] = true
+		commands, err := parseCommands(n.Content[i+1])
+		if err != nil {
+			return Hooks{}, fmt.Errorf("%s: %w", name, err)
+		}
+		switch name {
+		case "enrich":
+			h.Enrich = commands
+		case "gate":
+			h.Gate = commands
+		case "on-blocked", "on_blocked":
+			h.OnBlocked = commands
+		case "post-emit", "post_emit":
+			h.PostEmit = commands
+		default:
+			return Hooks{}, fmt.Errorf("unknown moment %s", name)
+		}
+	}
+	return h, nil
+}
+
+func parseCommands(n *yaml.Node) ([]string, error) {
+	switch n.Kind {
+	case yaml.ScalarNode:
+		if n.Value == "" {
+			return nil, fmt.Errorf("command is empty")
+		}
+		return []string{n.Value}, nil
+	case yaml.SequenceNode:
+		out := make([]string, 0, len(n.Content))
+		for _, item := range n.Content {
+			if item.Kind != yaml.ScalarNode || item.Value == "" {
+				return nil, fmt.Errorf("commands must be non-empty strings")
+			}
+			out = append(out, item.Value)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("must be a command or command list")
+	}
 }
 
 func parseFields(n *yaml.Node) ([]Field, error) {
