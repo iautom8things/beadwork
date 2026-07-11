@@ -246,6 +246,23 @@ var commands = []Command{
 		Run:        cmdAttach,
 	},
 	{
+		Name:        "signal",
+		Summary:     "Emit and inspect repo-defined signals",
+		Description: "Emit repo-defined signals and list configured signal types.\n\nSubcommands: emit, types.",
+		Positionals: []Positional{
+			{Name: "emit|types", Required: true, Help: "Subcommand"},
+		},
+		Flags: []Flag{
+			{Long: "--field", Value: "KEY=VALUE", Help: "Signal payload field (repeatable)"},
+		},
+		Examples: []Example{
+			{Cmd: "bw signal types"},
+			{Cmd: "bw signal emit bw-a3f8 verify --field phase=PASS"},
+		},
+		NeedsStore: true,
+		Run:        cmdSignal,
+	},
+	{
 		Name:    "reopen",
 		Summary: "Reopen a closed or in-progress issue",
 		Positionals: []Positional{
@@ -545,6 +562,7 @@ var commandGroups = []struct {
 	cmds []string
 }{
 	{"Working With Issues", []string{"create", "show", "list", "update", "start", "close", "reopen", "delete", "comment", "label", "defer", "undefer", "history", "attach"}},
+	{"Signals", []string{"signal"}},
 	{"Finding Work", []string{"ready", "blocked"}},
 	{"Dependencies", []string{"dep"}},
 	{"Sync & Data", []string{"sync", "export", "import"}},

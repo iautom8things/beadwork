@@ -103,25 +103,25 @@ decisions:
 ```yaml spec-verification
 - kind: command
   target: go test ./test/ -run TestSignalEmitAndReread
-  execute: false
+  execute: true
   covers:
     - bw.signal.store.immutable_snapshot
     - bw.signal.store.store_assigned_sequence
     - bw.signal.store.intent_verb
 - kind: command
   target: go test ./internal/issue/ -run TestSignalConcurrentEmits
-  execute: false
+  execute: true
   covers:
     - bw.signal.store.concurrent_parity
 - kind: command
   target: go test ./internal/intent/ -run TestReplaySignal
-  execute: false
+  execute: true
   covers:
     - bw.signal.store.replay_loud_fail
     - bw.signal.store.replay_no_hooks
 - kind: command
   target: go test ./cmd/bw/ -run TestSignalHistoryOutlivesDefinitions
-  execute: false
+  execute: true
   covers:
     - bw.signal.store.history_outlives_definitions
 ```

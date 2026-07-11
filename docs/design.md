@@ -47,6 +47,30 @@ current Beadwork tree and returns the blob bytes; a sentinel
 through the internal `store.Attach(ticketID, storedPath, content)` helper,
 which stages the blob and appends an `attach` intent line (see below).
 
+## Signals
+
+Repo-defined signals are immutable JSON records stored under
+`signals/<ticket-id>/`:
+
+```
+signals/
+  bw-a1b2/
+    0001.json
+    0002.json
+```
+
+Each record is a self-contained snapshot containing the store-assigned
+sequence number, signal type, ticket id, final payload, and store-assigned
+`emitted_at` timestamp. Sequence numbers are zero-padded and derived by
+reading the ticket's existing signal directory immediately before staging the
+record, so retrying after a ref-CAS conflict takes the next available number.
+
+Signal type definitions are read from `.beadwork/signals.yml` in the repository
+working tree, never from the beadwork branch. Repos without that file have no
+defined signal types; malformed config fails closed with a `CONFIG ERROR`.
+`bw signal emit` validates the final payload against the configured type schema
+before storing anything. This stage does not execute hooks.
+
 ## Sync
 
 Every CLI operation commits with a structured message that doubles as a replayable intent log:
@@ -58,6 +82,7 @@ link bw-a1b2 blocks bw-c3d4
 delete bw-a1b2
 comment bw-a1b2 "Fixed in latest deploy"
 attach bw-a1b2 design.png
+signal bw-a1b2 verify signals/bw-a1b2/0001.json
 ```
 
 ### The `attach` intent
@@ -86,5 +111,18 @@ the pre-replay commit tree (git keeps objects in the object database even
 after a ref reset). Re-stage the tree entry at that path with that blob
 oid. If the blob is missing from the ODB, the replay fails loudly with an
 error — attachments are never silently dropped.
+
+### The `signal` intent
+
+```
+signal <ticket-id> <type> <path>
+```
+
+`<path>` is the stored record path, for example
+`signals/bw-a1b2/0001.json`. Replay mirrors attachment recovery: the original
+JSON blob is read from the current tree or the pre-reset source commit and
+re-staged byte-for-byte. Replay does not read `.beadwork/signals.yml`, re-run
+validation, or execute hooks. If the blob cannot be recovered, replay fails
+loudly instead of silently dropping the signal.
 
 `bw sync` fetches, rebases, and pushes. If rebase conflicts, it replays intents from commit messages against the current remote state. No merge drivers, no lock files, no custom conflict resolution.

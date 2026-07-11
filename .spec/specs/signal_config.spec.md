@@ -113,33 +113,33 @@ decisions:
 ```yaml spec-verification
 - kind: command
   target: go test ./internal/signal/ -run TestConfigWorkingTreeSource
-  execute: false
+  execute: true
   covers:
     - bw.signal.config.working_tree_source
 - kind: command
   target: go test ./test/ -run TestSignalAdditivityDormantRepo
-  execute: false
+  execute: true
   covers:
     - bw.signal.config.dormant_when_absent
 - kind: command
   target: go test ./internal/signal/ -run TestConfigFailClosedMalformed
-  execute: false
+  execute: true
   covers:
     - bw.signal.config.fail_closed_malformed
 - kind: command
   target: go test ./cmd/bw/ -run TestSignalEmitUndefinedTypeRefused
-  execute: false
+  execute: true
   covers:
     - bw.signal.config.undefined_type_refused
     - bw.signal.config.zero_builtin_types
 - kind: command
   target: go test ./internal/signal/ -run TestSchemaExpressiveness
-  execute: false
+  execute: true
   covers:
     - bw.signal.config.schema_expressiveness
 - kind: command
   target: go test ./internal/signal/ -run TestValidateFinalPayload
-  execute: false
+  execute: true
   covers:
     - bw.signal.config.full_payload_validation
 ```

@@ -72,11 +72,36 @@ func replayOne(store *issue.Store, raw string) error {
 		return replayUndefer(store, parts[1:], raw)
 	case "attach":
 		return replayAttach(store, parts[1:], raw)
+	case "signal":
+		return replaySignal(store, parts[1:], raw)
 	case "init":
 		return nil // skip init intents
 	default:
 		return nil // unknown intent, skip
 	}
+}
+
+// replaySignal recovers the immutable signal record blob and re-stages it at
+// signals/<ticketID>/<NNNN>.json. Replay never re-runs validation or hooks.
+func replaySignal(store *issue.Store, parts []string, raw string) error {
+	// raw form: "signal <ticket-id> <type> <path>"
+	if len(parts) != 3 {
+		return fmt.Errorf("malformed signal intent")
+	}
+	ticketID := parts[0]
+	signalType := parts[1]
+	storedPath := parts[2]
+	if signalType == "" || storedPath == "" {
+		return fmt.Errorf("malformed signal intent")
+	}
+	data, err := store.ReadSignalSource(ticketID, storedPath)
+	if err != nil {
+		return err
+	}
+	if err := store.RestageSignal(ticketID, storedPath, data); err != nil {
+		return err
+	}
+	return store.Commit(raw)
 }
 
 // replayAttach recovers the blob for an attach intent and re-stages it

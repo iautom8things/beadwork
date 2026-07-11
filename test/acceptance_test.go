@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -140,6 +141,17 @@ func (e *bwEnv) bwFail(args ...string) string {
 			strings.Join(args, " "), stdout.String())
 	}
 	return stdout.String() + stderr.String()
+}
+
+func (e *bwEnv) writeSignals(content string) {
+	e.t.Helper()
+	dir := filepath.Join(e.dir, ".beadwork")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		e.t.Fatalf("mkdir .beadwork: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "signals.yml"), []byte(content), 0644); err != nil {
+		e.t.Fatalf("write signals.yml: %v", err)
+	}
 }
 
 // bwAtClock runs bw with BW_CLOCK (and git commit-date envs) overridden.
@@ -301,6 +313,58 @@ func (e *bwEnv) registryPaths() []string {
 		e.t.Fatalf("registryPaths load: %v", err)
 	}
 	return cfg.StringSlice("registry.repos")
+}
+
+func TestSignalEmitAndReread(t *testing.T) {
+	env := newBwEnv(t)
+	env.writeSignals(`
+types:
+  verify:
+    fields:
+      phase:
+        type: enum
+        values: [PASS, FAIL]
+        required: true
+`)
+	env.bw("signal", "emit", "test-x", "verify", "--field", "phase=PASS")
+
+	raw := env.git("show", "beadwork:signals/test-x/0001.json")
+	var rec struct {
+		Seq       int            `json:"seq"`
+		Type      string         `json:"type"`
+		Ticket    string         `json:"ticket"`
+		Payload   map[string]any `json:"payload"`
+		EmittedAt string         `json:"emitted_at"`
+	}
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		t.Fatalf("unmarshal signal: %v\n%s", err, raw)
+	}
+	if rec.Seq != 1 || rec.Type != "verify" || rec.Ticket != "test-x" || rec.Payload["phase"] != "PASS" {
+		t.Fatalf("record = %#v", rec)
+	}
+	if rec.EmittedAt != fixedClock {
+		t.Fatalf("emitted_at = %q, want %q", rec.EmittedAt, fixedClock)
+	}
+	msg := env.git("log", "beadwork", "-1", "--pretty=%B")
+	if strings.TrimSpace(msg) != "signal test-x verify signals/test-x/0001.json" {
+		t.Fatalf("commit msg = %q", msg)
+	}
+}
+
+func TestSignalAdditivityDormantRepo(t *testing.T) {
+	env := newBwEnv(t)
+	before := env.bw("list", "--all")
+	after := env.bw("list", "--all")
+	if before != after {
+		t.Fatalf("non-signal output changed in dormant repo\nbefore=%q\nafter=%q", before, after)
+	}
+	out := env.bwFail("signal", "emit", "test-x", "verify")
+	if !strings.Contains(out, "VALIDATION") || !strings.Contains(out, "no signal types defined") {
+		t.Fatalf("dormant emit output = %q", out)
+	}
+	if got := env.git("ls-tree", "-r", "--name-only", "beadwork"); strings.Contains(got, "signals/") {
+		t.Fatalf("dormant failed emit stored signal:\n%s", got)
+	}
 }
 
 // recapCursor reads the recap cursor ref from the git dir.
