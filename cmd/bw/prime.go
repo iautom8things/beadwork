@@ -20,6 +20,7 @@ type PrimeData struct {
 	Git              repo.GitContext
 	OverdueCount     int
 	ExpiredDeferrals string
+	HasSignalTypes   bool
 }
 
 func cmdPrime(store *issue.Store, _ []string, w Writer, _ *config.Config) (*config.Config, error) {
@@ -39,12 +40,14 @@ func cmdPrime(store *issue.Store, _ []string, w Writer, _ *config.Config) (*conf
 		}
 	}
 
+	signalConfig, _ := loadSignalConfig(store)
 	data := PrimeData{
 		Prefix:           cfg["prefix"],
 		WorktreeDirty:    gitCtx.Dirty,
 		Git:              gitCtx,
 		OverdueCount:     len(overdueIssues),
 		ExpiredDeferrals: strings.Join(expiredLines, "\n"),
+		HasSignalTypes:   signalConfig != nil && len(signalConfig.Types) > 0,
 	}
 
 	bwFn := func(args ...string) string {

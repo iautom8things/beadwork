@@ -96,29 +96,29 @@ decisions:
 ```yaml spec-verification
 - kind: command
   target: go test ./test/ -run TestSignalQuerySinceCursorExactlyOnce
-  execute: false
+  execute: true
   covers:
     - bw.signal.query.since_cursor
     - bw.signal.query.exactly_once_single_host
 - kind: command
   target: go test ./cmd/bw/ -run TestSignalQueryStoreAssignedCursor
-  execute: false
+  execute: true
   covers:
     - bw.signal.query.store_assigned_cursor
     - bw.signal.query.core_stateless_cursor
 - kind: command
   target: go test ./cmd/bw/ -run TestShowSignalsSection
-  execute: false
+  execute: true
   covers:
     - bw.signal.query.show_rendering
 - kind: command
   target: go test ./cmd/bw/ -run TestUsageListsSignalGroup
-  execute: false
+  execute: true
   covers:
     - bw.signal.query.discovery
 - kind: command
   target: go test ./cmd/bw/ -run TestPrimeMentionsSignalsWhenDefined
-  execute: false
+  execute: true
   covers:
     - bw.signal.query.discovery
 ```

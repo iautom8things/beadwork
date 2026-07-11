@@ -19,6 +19,7 @@ var validShowSections = map[string]bool{
 	"blockedby":   true,
 	"unblocks":    true,
 	"comments":    true,
+	"signals":     true,
 }
 
 type ShowArgs struct {
@@ -102,7 +103,30 @@ func cmdShow(store *issue.Store, args []string, w Writer, _ *config.Config) (*co
 	if sa.showSection("comments") {
 		showComments(w, iss)
 	}
+	if sa.showSection("signals") {
+		if err := showSignals(w, iss, store); err != nil {
+			return nil, err
+		}
+	}
 	return nil, nil
+}
+
+func showSignals(w Writer, iss *issue.Issue, store *issue.Store) error {
+	records, err := store.SignalsForTicket(iss.ID)
+	if err != nil || len(records) == 0 {
+		return err
+	}
+	cfg, err := loadSignalConfig(store)
+	if err != nil {
+		return err
+	}
+	defined := make(map[string]bool, len(cfg.Types))
+	for _, typ := range cfg.Types {
+		defined[typ.Name] = true
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, md.Signals(records, defined))
+	return nil
 }
 
 func showDescription(w Writer, iss *issue.Issue) {

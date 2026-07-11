@@ -27,6 +27,41 @@ func TestCmdShowBasic(t *testing.T) {
 	}
 }
 
+func TestShowSignalsSection(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	writeCmdSignals(t, env.Dir, "types:\n  verify: {}\n  audit: {}\n")
+	iss, _ := env.Store.Create("Signals", issue.CreateOpts{})
+	env.Repo.Commit("create " + iss.ID)
+	for typ, payload := range map[string]map[string]any{
+		"verify": {"phase": "PASS"},
+		"audit":  {"phase": "BOUNCE", "target": "implementer"},
+	} {
+		if _, _, err := env.Store.EmitSignal(iss.ID, typ, payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Deliberately remove audit: its immutable snapshot must remain renderable.
+	writeCmdSignals(t, env.Dir, "types:\n  verify: {}\n")
+	var buf bytes.Buffer
+	if _, err := cmdShow(env.Store, []string{iss.ID, "--only", "signals"}, PlainWriter(&buf), nil); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "## SIGNALS") || !strings.Contains(out, "verify PASS") || !strings.Contains(out, "audit BOUNCE → implementer (type not defined)") {
+		t.Fatalf("signal rendering missing trail/orphan note:\n%s", out)
+	}
+	if strings.Index(out, "verify PASS") > strings.Index(out, "audit BOUNCE") {
+		t.Fatalf("signals not in sequence order:\n%s", out)
+	}
+}
+
+func TestShowSectionsListSignals(t *testing.T) {
+	if !validShowSections["signals"] || !strings.Contains(showSectionNames(), "signals") {
+		t.Fatalf("signals absent from show sections: %s", showSectionNames())
+	}
+}
+
 func TestCmdShowJSON(t *testing.T) {
 	env := testutil.NewEnv(t)
 	defer env.Cleanup()

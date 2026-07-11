@@ -351,6 +351,41 @@ types:
 	}
 }
 
+func TestSignalQuerySinceCursorExactlyOnce(t *testing.T) {
+	env := newBwEnv(t)
+	env.writeSignals("types:\n  verify:\n    fields:\n      phase:\n        type: string\n        required: true\n")
+	env.bw("create", "poll target", "--id", "test-x")
+	c0 := strings.TrimSpace(env.git("rev-parse", "beadwork"))
+	for i := 1; i <= 3; i++ {
+		env.bw("signal", "emit", "test-x", "verify", "--field", fmt.Sprintf("phase=P%d", i))
+		if i < 3 {
+			env.bw("comment", "test-x", fmt.Sprintf("between %d", i))
+		}
+	}
+	var first struct {
+		Signals []struct {
+			Seq int `json:"seq"`
+		} `json:"signals"`
+		Cursor string `json:"cursor"`
+	}
+	if err := json.Unmarshal([]byte(env.bw("signal", "query", "--ticket", "test-x", "--since", c0, "--json")), &first); err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Signals) != 3 || first.Signals[0].Seq != 1 || first.Signals[2].Seq != 3 {
+		t.Fatalf("first poll=%#v", first)
+	}
+	var second struct {
+		Signals []json.RawMessage `json:"signals"`
+		Cursor  string            `json:"cursor"`
+	}
+	if err := json.Unmarshal([]byte(env.bw("signal", "query", "--ticket", "test-x", "--since", first.Cursor, "--json")), &second); err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Signals) != 0 || second.Cursor != first.Cursor {
+		t.Fatalf("second poll=%#v", second)
+	}
+}
+
 func TestSignalAdditivityDormantRepo(t *testing.T) {
 	env := newBwEnv(t)
 	before := env.bw("list", "--all")

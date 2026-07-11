@@ -147,4 +147,14 @@ re-staged byte-for-byte. Replay does not read `.beadwork/signals.yml`, re-run
 validation, or execute hooks. If the blob cannot be recovered, replay fails
 loudly instead of silently dropping the signal.
 
+### Signal query cursors
+
+`bw signal query --ticket <id> --since <commit> --json` walks beadwork commits
+after the supplied commit hash and returns matching immutable snapshots oldest
+first. Its response cursor is the current beadwork branch head. Callers persist
+and supply that cursor; beadwork core stores no poll state. Local compare-and-swap
+ref updates provide exactly-once ordering on one host, including across unrelated
+commits. Sync may rewrite hashes, so cross-machine cursor correctness is not
+promised.
+
 `bw sync` fetches, rebases, and pushes. If rebase conflicts, it replays intents from commit messages against the current remote state. No merge drivers, no lock files, no custom conflict resolution.

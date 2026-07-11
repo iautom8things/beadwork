@@ -6,11 +6,35 @@ package md
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/jallum/beadwork/internal/issue"
 )
+
+// Signals returns a chronological human trail from immutable signal snapshots.
+func Signals(records []issue.SignalRecord, defined map[string]bool) string {
+	sort.Slice(records, func(i, j int) bool { return records[i].Seq < records[j].Seq })
+	var b strings.Builder
+	b.WriteString("## SIGNALS")
+	for _, rec := range records {
+		b.WriteString("\n\n- ")
+		b.WriteString(Escape(rec.Type))
+		if phase, ok := rec.Payload["phase"]; ok {
+			b.WriteByte(' ')
+			b.WriteString(Escape(fmt.Sprint(phase)))
+		}
+		if target, ok := rec.Payload["target"]; ok {
+			b.WriteString(" → ")
+			b.WriteString(Escape(fmt.Sprint(target)))
+		}
+		if !defined[rec.Type] {
+			b.WriteString(" (type not defined)")
+		}
+	}
+	return b.String()
+}
 
 // escChar is the escape prefix used to protect literal { in user content.
 const escChar = "\x00"

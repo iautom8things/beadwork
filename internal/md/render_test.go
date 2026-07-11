@@ -190,6 +190,16 @@ func TestDescription(t *testing.T) {
 	}
 }
 
+func TestSignalsChronological(t *testing.T) {
+	got := Signals([]issue.SignalRecord{
+		{Seq: 2, Type: "audit", Payload: map[string]any{"phase": "BOUNCE", "target": "implementer"}},
+		{Seq: 1, Type: "verify", Payload: map[string]any{"phase": "PASS"}},
+	}, map[string]bool{"verify": true})
+	if strings.Index(got, "verify PASS") > strings.Index(got, "audit BOUNCE") || !strings.Contains(got, "audit BOUNCE → implementer (type not defined)") {
+		t.Fatalf("Signals()=%q", got)
+	}
+}
+
 func TestDescriptionWithBraces(t *testing.T) {
 	got := Description("config {key} = {value}")
 	resolved := ResolveMarkdown(got)

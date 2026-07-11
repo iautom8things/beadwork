@@ -12,6 +12,11 @@ Issues live on the `beadwork` branch. IDs: `{{ .Prefix }}-XYZ`. Status: open →
 
 Due dates (`bw update <id> --due <date>`) are deadlines that do not change status. Deferred issues (`bw defer`) are hidden from `bw ready`; due issues are not. Overdue items appear in `bw list --overdue`. Date expressions: `YYYY-MM-DD`, `tomorrow`, `2 weeks`, `next monday`, `in 15 minutes`, `tomorrow at 2pm`, `3pm`, or full RFC3339.
 
+{{ if .HasSignalTypes -}}
+Signals are typed, append-only workflow records. Use `bw signal types`, `bw signal emit`, and `bw signal query --ticket <id> --json` to discover, emit, and poll them.
+
+{{ end -}}
+
 ## Where You Are
 
 {{ if .Git.IsWorktree }}Worktree{{ else }}Branch{{ end }} `{{ .Git.Branch }}`{{ if .Git.Dirty }} · **uncommitted changes**{{ else }} · clean{{ end }} · last commit: `{{ .Git.LastCommit }}`
