@@ -396,6 +396,24 @@ func TestSignalHookMalfunction(t *testing.T) {
 	}
 }
 
+func TestSignalGateMalfunctionDoesNotFireOnBlocked(t *testing.T) {
+	env := newBwEnv(t)
+	blocked := filepath.Join(env.dir, "blocked")
+	gate := writeSignalHook(t, env.dir, "gate", "echo crashed; exit 2")
+	onBlocked := writeSignalHook(t, env.dir, "blocked-hook", "echo fired > '"+blocked+"'")
+	env.writeSignals("types:\n  verify:\n    hooks:\n      gate: " + gate + "\n      on-blocked: " + onBlocked + "\n")
+	out := env.bwFail("signal", "emit", "test-x", "verify")
+	if !strings.Contains(out, "MALFUNCTION") {
+		t.Fatalf("output=%q", out)
+	}
+	if _, err := os.Stat(blocked); !os.IsNotExist(err) {
+		t.Fatalf("on-blocked fired on malfunction, stat err=%v", err)
+	}
+	if got := env.git("ls-tree", "-r", "--name-only", "beadwork"); strings.Contains(got, "signals/test-x/") {
+		t.Fatalf("stored malfunctioning signal: %s", got)
+	}
+}
+
 func TestSignalPostEmitWarning(t *testing.T) {
 	env := newBwEnv(t)
 	post := writeSignalHook(t, env.dir, "post", "echo notify-failed >&2; exit 1")
