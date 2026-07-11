@@ -49,6 +49,22 @@ decisions:
   statement: Beadwork core shall define no built-in signal types.
   priority: must
   stability: stable
+- id: bw.signal.config.introspection_types
+  statement: bw signal types shall preserve its default bare-name output and shall additionally support --verbose and --json modes that expose every configured type's fields, enum domains, required and required_when modifiers, effective hook_timeout, and hook commands in their real resolution order.
+  priority: must
+  stability: stable
+- id: bw.signal.config.introspection_show
+  statement: bw signal show <type> shall expose the same detail for one defined type and shall refuse an undefined type with a clear validation error.
+  priority: must
+  stability: stable
+- id: bw.signal.config.validate_dry_run
+  statement: bw signal validate <type> shall dry-run payload validation without storing a signal; by default it shall run schema validation only, and with --run-hooks it shall run enrich, final schema validation, and gate while suppressing storage, on-blocked hooks, and post-emit hooks.
+  priority: must
+  stability: stable
+- id: bw.signal.config.validate_dry_run_env
+  statement: In bw signal validate --run-hooks mode, every hook process shall receive BW_SIGNAL_DRY_RUN=1.
+  priority: must
+  stability: stable
 ```
 
 ## Scenarios
@@ -106,6 +122,51 @@ decisions:
     - the emit is refused for the missing conditionally-required field
   covers:
     - bw.signal.config.schema_expressiveness
+- id: bw.signal.config.types_verbose_and_json
+  given:
+    - a .beadwork/signals.yml declaring fields, required_when, global hooks, type hooks, and hook_timeout
+  when:
+    - bw signal types --verbose and bw signal types --json run
+  then:
+    - the default types output remains bare names
+    - verbose and JSON output include field schema details, hook_timeout, and hooks in effective enrich and gate order
+  covers:
+    - bw.signal.config.introspection_types
+- id: bw.signal.config.show_type
+  given:
+    - a .beadwork/signals.yml declaring an audit type
+  when:
+    - bw signal show audit runs
+    - bw signal show missing runs
+  then:
+    - the defined type renders the same detail as verbose types output
+    - the undefined type exits non-zero with a validation error naming the type
+  covers:
+    - bw.signal.config.introspection_show
+- id: bw.signal.config.validate_schema_only
+  given:
+    - a verify type whose phase field is enum [PASS, FAIL], required
+  when:
+    - bw signal validate verify --field phase=PASS runs
+    - bw signal validate verify --field phase=MAYBE runs
+  then:
+    - the valid payload reports schema PASS and stores nothing
+    - the invalid payload reports schema FAIL and stores nothing
+  covers:
+    - bw.signal.config.validate_dry_run
+- id: bw.signal.config.validate_run_hooks
+  given:
+    - a verify type with enrich, gate, and on-blocked hooks
+  when:
+    - bw signal validate verify --run-hooks runs
+    - bw signal validate verify --field phase=PASS --run-hooks runs with a blocking gate
+  then:
+    - hooks see BW_SIGNAL_DRY_RUN=1
+    - enriched payload and gate verdict are reported
+    - no signal is stored and on-blocked does not run
+  covers:
+    - bw.signal.config.validate_dry_run
+    - bw.signal.config.validate_dry_run_env
 ```
 
 ## Verification
@@ -142,4 +203,44 @@ decisions:
   execute: true
   covers:
     - bw.signal.config.full_payload_validation
+- kind: command
+  target: go test ./cmd/bw/ -run TestSignalTypesVerbose
+  execute: true
+  covers:
+    - bw.signal.config.introspection_types
+- kind: command
+  target: go test ./cmd/bw/ -run TestSignalTypesJSON
+  execute: true
+  covers:
+    - bw.signal.config.introspection_types
+- kind: command
+  target: go test ./cmd/bw/ -run TestSignalShowType
+  execute: true
+  covers:
+    - bw.signal.config.introspection_show
+- kind: command
+  target: go test ./cmd/bw/ -run TestSignalShowUndefinedType
+  execute: true
+  covers:
+    - bw.signal.config.introspection_show
+- kind: command
+  target: go test ./cmd/bw/ -run TestSignalValidateSchemaOnly
+  execute: true
+  covers:
+    - bw.signal.config.validate_dry_run
+- kind: command
+  target: go test ./cmd/bw/ -run TestSignalValidateNeverStores
+  execute: true
+  covers:
+    - bw.signal.config.validate_dry_run
+- kind: command
+  target: go test ./cmd/bw/ -run TestSignalValidateRunHooksGateBlock
+  execute: true
+  covers:
+    - bw.signal.config.validate_dry_run
+- kind: command
+  target: go test ./cmd/bw/ -run TestSignalValidateDryRunEnv
+  execute: true
+  covers:
+    - bw.signal.config.validate_dry_run_env
 ```

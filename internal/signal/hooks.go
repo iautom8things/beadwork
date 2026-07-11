@@ -31,6 +31,13 @@ type hookRecord struct {
 	Payload map[string]any `json:"payload"`
 }
 
+// DryRunResult reports the non-storing validation pipeline state.
+type DryRunResult struct {
+	Payload       map[string]any
+	ValidationErr error
+	GateErr       error
+}
+
 // Run executes enrich, validation, gate, store, and post-emit in order. Post-emit
 // failures are returned as warnings while a successful store remains successful.
 func (p Pipeline) Run(payload map[string]any, validate func(map[string]any) (map[string]any, error), store func(map[string]any) error) (map[string]any, []error, error) {
@@ -72,9 +79,55 @@ func (p Pipeline) Run(payload map[string]any, validate func(map[string]any) (map
 	return payload, warnings, nil
 }
 
+// DryRun executes enrich, final validation, and gate without storing the signal
+// and without running on-blocked or post-emit hooks.
+func (p Pipeline) DryRun(payload map[string]any, validate func(map[string]any) (map[string]any, error)) (DryRunResult, error) {
+	if p.Config == nil || p.Type == nil {
+		err := fmt.Errorf("pipeline requires config and type")
+		return DryRunResult{Payload: payload, ValidationErr: err}, err
+	}
+	var err error
+	for _, h := range appendCopy(p.Config.Hooks.Enrich, p.Type.Hooks.Enrich...) {
+		payload, err = p.enrichDryRun(h, payload)
+		if err != nil {
+			return DryRunResult{Payload: payload, ValidationErr: err}, err
+		}
+	}
+	payload, err = validate(payload)
+	if err != nil {
+		return DryRunResult{Payload: payload, ValidationErr: err}, err
+	}
+	for _, h := range appendCopy(p.Type.Hooks.Gate, p.Config.Hooks.Gate...) {
+		res, runErr := p.runDryRun(h, "gate", payload)
+		if runErr == nil {
+			continue
+		}
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) && ee.ExitCode() == 1 {
+			reason := strings.TrimSpace(res.stdout.String() + res.stderr.String())
+			if reason == "" {
+				reason = "refused"
+			}
+			blocked := HookError{Kind: "BLOCKED", Hook: h, Reason: reason}
+			return DryRunResult{Payload: payload, GateErr: blocked}, blocked
+		}
+		err := malfunction(h, runErr)
+		return DryRunResult{Payload: payload, GateErr: err}, err
+	}
+	return DryRunResult{Payload: payload}, nil
+}
+
 type hookResult struct{ stdout, stderr bytes.Buffer }
 
 func (p Pipeline) run(h, moment string, payload map[string]any) (hookResult, error) {
+	return p.runWithEnv(h, moment, payload, nil)
+}
+
+func (p Pipeline) runDryRun(h, moment string, payload map[string]any) (hookResult, error) {
+	return p.runWithEnv(h, moment, payload, []string{"BW_SIGNAL_DRY_RUN=1"})
+}
+
+func (p Pipeline) runWithEnv(h, moment string, payload map[string]any, extraEnv []string) (hookResult, error) {
 	var result hookResult
 	b, err := json.Marshal(hookRecord{Type: p.Type.Name, Ticket: p.Ticket, Payload: payload})
 	if err != nil {
@@ -88,6 +141,7 @@ func (p Pipeline) run(h, moment string, payload map[string]any) (hookResult, err
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Dir = p.RepoRoot
 	cmd.Env = append(os.Environ(), "BW_SIGNAL_TYPE="+p.Type.Name, "BW_SIGNAL_TICKET="+p.Ticket, "BW_SIGNAL_MOMENT="+moment)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdin = bytes.NewReader(append(b, '\n'))
 	cmd.Stdout, cmd.Stderr = &result.stdout, &result.stderr
 	if err := cmd.Start(); err != nil {
@@ -116,6 +170,15 @@ func (p Pipeline) run(h, moment string, payload map[string]any) (hookResult, err
 
 func (p Pipeline) enrich(h string, payload map[string]any) (map[string]any, error) {
 	res, err := p.run(h, "enrich", payload)
+	return p.enrichResult(h, payload, res, err)
+}
+
+func (p Pipeline) enrichDryRun(h string, payload map[string]any) (map[string]any, error) {
+	res, err := p.runDryRun(h, "enrich", payload)
+	return p.enrichResult(h, payload, res, err)
+}
+
+func (p Pipeline) enrichResult(h string, payload map[string]any, res hookResult, err error) (map[string]any, error) {
 	if err != nil {
 		return nil, malfunction(h, err)
 	}

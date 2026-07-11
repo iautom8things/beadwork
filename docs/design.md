@@ -93,6 +93,16 @@ BLOCKED runs `on-blocked`; MALFUNCTION does not. Both fail closed before storage
 Hooks run once outside ref-CAS retries. After durable storage, post-emit failures
 print a warning but do not turn a successful emit into a failure.
 
+Signal configuration is introspectable without reading YAML by hand. `bw signal
+types` preserves its default bare-name output for scripts; `bw signal types
+--verbose` and `bw signal types --json` include fields, enum domains, required
+and required_when modifiers, effective hook_timeout, and inherited plus per-type
+hooks in the order Beadwork will execute them. `bw signal show <type>` renders
+the same detail for one type. `bw signal validate <type> --field k=v` performs
+schema-only validation and stores nothing; adding `--run-hooks` dry-runs enrich,
+final validation, and gate with `BW_SIGNAL_DRY_RUN=1` in the hook environment,
+still storing nothing and still suppressing on-blocked and post-emit hooks.
+
 ## Sync
 
 Every CLI operation commits with a structured message that doubles as a replayable intent log:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,4 +185,295 @@ func TestSignalHooksRunOnceUnderRetry(t *testing.T) {
 	if got := len(strings.Fields(string(b))); got != 1 {
 		t.Fatalf("hook calls=%d", got)
 	}
+}
+
+func TestSignalTypesVerbose(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	enrichGlobal := filepath.Join(env.Dir, "global-enrich")
+	enrichType := filepath.Join(env.Dir, "type-enrich")
+	gateType := filepath.Join(env.Dir, "type-gate")
+	gateGlobal := filepath.Join(env.Dir, "global-gate")
+	writeCmdSignals(t, env.Dir, `
+hook_timeout: 2s
+hooks:
+  enrich: `+enrichGlobal+`
+  gate: `+gateGlobal+`
+types:
+  audit:
+    fields:
+      phase:
+        type: enum
+        values: [APPROVE, BOUNCE]
+        required: true
+      target:
+        type: enum
+        values: [implementer, verifier]
+        required_when:
+          field: phase
+          equals: BOUNCE
+    hooks:
+      enrich: `+enrichType+`
+      gate: `+gateType+`
+`)
+	var buf bytes.Buffer
+	if _, err := cmdSignal(env.Store, []string{"types", "--verbose"}, PlainWriter(&buf), nil); err != nil {
+		t.Fatalf("cmdSignal types --verbose: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"audit",
+		"phase: enum [APPROVE, BOUNCE] required",
+		"target: enum [implementer, verifier] required_when phase=BOUNCE",
+		"hook_timeout: 2s",
+		"global: " + enrichGlobal,
+		"type: " + enrichType,
+		"type: " + gateType,
+		"global: " + gateGlobal,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("verbose output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Index(out, "global: "+enrichGlobal) > strings.Index(out, "type: "+enrichType) {
+		t.Fatalf("enrich hooks not rendered global before type:\n%s", out)
+	}
+	if strings.Index(out, "type: "+gateType) > strings.Index(out, "global: "+gateGlobal) {
+		t.Fatalf("gate hooks not rendered type before global:\n%s", out)
+	}
+}
+
+func TestSignalTypesJSON(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	writeIntrospectionSignals(t, env.Dir)
+	var buf bytes.Buffer
+	if _, err := cmdSignal(env.Store, []string{"types", "--json"}, PlainWriter(&buf), nil); err != nil {
+		t.Fatalf("cmdSignal types --json: %v", err)
+	}
+	var got struct {
+		Types []signalTypeDetail `json:"types"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("json parse: %v\n%s", err, buf.String())
+	}
+	if len(got.Types) != 1 || got.Types[0].Name != "audit" {
+		t.Fatalf("types = %#v", got.Types)
+	}
+	if got.Types[0].Fields[1].RequiredWhen == nil || got.Types[0].Fields[1].RequiredWhen.Field != "phase" {
+		t.Fatalf("required_when missing from json: %#v", got.Types[0].Fields)
+	}
+	if got.Types[0].Hooks.Enrich[0].Source != "global" || got.Types[0].Hooks.Enrich[1].Source != "type" {
+		t.Fatalf("enrich order = %#v", got.Types[0].Hooks.Enrich)
+	}
+	if got.Types[0].Hooks.Gate[0].Source != "type" || got.Types[0].Hooks.Gate[1].Source != "global" {
+		t.Fatalf("gate order = %#v", got.Types[0].Hooks.Gate)
+	}
+}
+
+func TestSignalShowType(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	writeIntrospectionSignals(t, env.Dir)
+	var buf bytes.Buffer
+	if _, err := cmdSignal(env.Store, []string{"show", "audit"}, PlainWriter(&buf), nil); err != nil {
+		t.Fatalf("cmdSignal show: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "audit") || !strings.Contains(out, "phase: enum [APPROVE, BOUNCE] required") {
+		t.Fatalf("show output missing detail:\n%s", out)
+	}
+}
+
+func TestSignalShowUndefinedType(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	writeIntrospectionSignals(t, env.Dir)
+	var buf bytes.Buffer
+	_, err := cmdSignal(env.Store, []string{"show", "missing"}, PlainWriter(&buf), nil)
+	if err == nil || !strings.Contains(err.Error(), "VALIDATION") || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("err = %v, want validation error naming undefined type", err)
+	}
+}
+
+func TestSignalValidateSchemaOnly(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	writeCmdSignals(t, env.Dir, `
+types:
+  verify:
+    fields:
+      phase:
+        type: enum
+        values: [PASS, FAIL]
+        required: true
+`)
+	var valid bytes.Buffer
+	if _, err := cmdSignal(env.Store, []string{"validate", "verify", "--field", "phase=PASS"}, PlainWriter(&valid), nil); err != nil {
+		t.Fatalf("validate valid: %v\n%s", err, valid.String())
+	}
+	if !strings.Contains(valid.String(), "schema: PASS") || !strings.Contains(valid.String(), "field phase: PASS") {
+		t.Fatalf("valid report missing pass:\n%s", valid.String())
+	}
+	var invalid bytes.Buffer
+	_, err := cmdSignal(env.Store, []string{"validate", "verify", "--field", "phase=MAYBE"}, PlainWriter(&invalid), nil)
+	if err == nil {
+		t.Fatal("expected invalid payload to fail")
+	}
+	if !strings.Contains(invalid.String(), "schema: FAIL") || !strings.Contains(err.Error(), "MAYBE") {
+		t.Fatalf("invalid report/error missing failure:\nreport=%s\nerr=%v", invalid.String(), err)
+	}
+}
+
+func TestSignalValidateNeverStores(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	hook := writeHook(t, env.Dir, "enrich", `#!/bin/sh
+cat >/dev/null
+printf '{"phase":"PASS"}'
+`)
+	writeCmdSignals(t, env.Dir, `
+types:
+  verify:
+    fields:
+      phase:
+        type: enum
+        values: [PASS, FAIL]
+        required: true
+    hooks:
+      enrich: `+hook+`
+`)
+	for _, args := range [][]string{
+		{"validate", "verify", "--field", "phase=PASS"},
+		{"validate", "verify", "--run-hooks"},
+	} {
+		var buf bytes.Buffer
+		if _, err := cmdSignal(env.Store, args, PlainWriter(&buf), nil); err != nil {
+			t.Fatalf("cmdSignal %v: %v\n%s", args, err, buf.String())
+		}
+		records, err := env.Store.SignalsForTicket("test-x")
+		if err != nil {
+			t.Fatalf("SignalsForTicket: %v", err)
+		}
+		if len(records) != 0 {
+			t.Fatalf("validate %v stored records: %#v", args, records)
+		}
+	}
+}
+
+func TestSignalValidateRunHooksGateBlock(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	blockedMarker := filepath.Join(env.Dir, "blocked-marker")
+	onBlockedMarker := filepath.Join(env.Dir, "on-blocked-marker")
+	gate := writeHook(t, env.Dir, "gate", `#!/bin/sh
+cat >/dev/null
+echo policy-blocked > '`+blockedMarker+`'
+echo policy-blocked
+exit 1
+`)
+	onBlocked := writeHook(t, env.Dir, "on-blocked", `#!/bin/sh
+cat >/dev/null
+echo fired > '`+onBlockedMarker+`'
+`)
+	writeCmdSignals(t, env.Dir, `
+types:
+  verify:
+    fields:
+      phase:
+        type: enum
+        values: [PASS, FAIL]
+        required: true
+    hooks:
+      gate: `+gate+`
+      on-blocked: `+onBlocked+`
+`)
+	var buf bytes.Buffer
+	_, err := cmdSignal(env.Store, []string{"validate", "verify", "--field", "phase=PASS", "--run-hooks"}, PlainWriter(&buf), nil)
+	if err == nil {
+		t.Fatal("expected gate block")
+	}
+	if !strings.Contains(buf.String(), "gate: BLOCKED") || !strings.Contains(buf.String(), "policy-blocked") {
+		t.Fatalf("blocked report missing verdict/reason:\n%s", buf.String())
+	}
+	if _, err := os.Stat(blockedMarker); err != nil {
+		t.Fatalf("gate marker missing: %v", err)
+	}
+	if _, err := os.Stat(onBlockedMarker); !os.IsNotExist(err) {
+		t.Fatalf("on-blocked fired during dry-run, stat err=%v", err)
+	}
+	records, err := env.Store.SignalsForTicket("test-x")
+	if err != nil {
+		t.Fatalf("SignalsForTicket: %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("dry-run gate block stored records: %#v", records)
+	}
+}
+
+func TestSignalValidateDryRunEnv(t *testing.T) {
+	env := testutil.NewEnv(t)
+	defer env.Cleanup()
+	seen := filepath.Join(env.Dir, "dry-run-env")
+	hook := writeHook(t, env.Dir, "gate-env", `#!/bin/sh
+cat >/dev/null
+printf '%s' "$BW_SIGNAL_DRY_RUN" > '`+seen+`'
+`)
+	writeCmdSignals(t, env.Dir, `
+types:
+  verify:
+    fields:
+      phase:
+        type: enum
+        values: [PASS, FAIL]
+        required: true
+    hooks:
+      gate: `+hook+`
+`)
+	var buf bytes.Buffer
+	if _, err := cmdSignal(env.Store, []string{"validate", "verify", "--field", "phase=PASS", "--run-hooks"}, PlainWriter(&buf), nil); err != nil {
+		t.Fatalf("validate --run-hooks: %v\n%s", err, buf.String())
+	}
+	data, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatalf("read env marker: %v", err)
+	}
+	if string(data) != "1" {
+		t.Fatalf("BW_SIGNAL_DRY_RUN = %q, want 1", string(data))
+	}
+}
+
+func writeIntrospectionSignals(t *testing.T, dir string) {
+	t.Helper()
+	writeCmdSignals(t, dir, `
+hook_timeout: 2s
+hooks:
+  enrich: /global-enrich
+  gate: /global-gate
+types:
+  audit:
+    fields:
+      phase:
+        type: enum
+        values: [APPROVE, BOUNCE]
+        required: true
+      target:
+        type: enum
+        values: [implementer, verifier]
+        required_when:
+          field: phase
+          equals: BOUNCE
+    hooks:
+      enrich: /type-enrich
+      gate: /type-gate
+`)
+}
+
+func writeHook(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0755); err != nil {
+		t.Fatalf("WriteFile hook: %v", err)
+	}
+	return path
 }

@@ -248,15 +248,19 @@ var commands = []Command{
 	{
 		Name:        "signal",
 		Summary:     "Emit and inspect repo-defined signals",
-		Description: "Emit repo-defined signals and list configured signal types.\n\nSubcommands: emit, types.",
+		Description: "Emit repo-defined signals, inspect configured signal types, and dry-run signal payload validation.\n\nSubcommands: emit, types, show, validate.",
 		Positionals: []Positional{
-			{Name: "emit|types", Required: true, Help: "Subcommand"},
+			{Name: "emit|types|show|validate", Required: true, Help: "Subcommand"},
 		},
 		Flags: []Flag{
 			{Long: "--field", Value: "KEY=VALUE", Help: "Signal payload field (repeatable)"},
+			{Long: "--verbose", Help: "Show signal type field and hook details"},
+			{Long: "--run-hooks", Help: "During validate, run dry-run enrich and gate hooks without storing"},
 		},
 		Examples: []Example{
 			{Cmd: "bw signal types"},
+			{Cmd: "bw signal show verify --json"},
+			{Cmd: "bw signal validate verify --field phase=PASS --run-hooks"},
 			{Cmd: "bw signal emit bw-a3f8 verify --field phase=PASS"},
 		},
 		NeedsStore: true,

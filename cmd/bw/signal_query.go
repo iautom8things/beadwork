@@ -29,7 +29,7 @@ func init() {
 			continue
 		}
 		commands[i].Description += " Query supports stateless since-cursor polling."
-		commands[i].Positionals[0].Name = "emit|types|query"
+		commands[i].Positionals[0].Name = "emit|types|show|validate|query"
 		commands[i].Flags = append(commands[i].Flags,
 			Flag{Long: "--ticket", Value: "ID", Help: "Query signals for a ticket"},
 			Flag{Long: "--type", Value: "TYPE", Help: "Filter queried signals by type"},
