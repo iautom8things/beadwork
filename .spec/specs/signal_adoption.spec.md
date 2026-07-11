@@ -78,7 +78,7 @@ decisions:
     - bw.signal.adoption.all_markers_defined
 - kind: source_file
   target: ~/Documents/my-vault/LLMs/skills/orchestrate-epic/SKILL.md
-  execute: false
+  execute: true
   covers:
     - bw.signal.adoption.dual_mode_skills
 ```
