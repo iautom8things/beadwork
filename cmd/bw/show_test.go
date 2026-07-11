@@ -33,11 +33,14 @@ func TestShowSignalsSection(t *testing.T) {
 	writeCmdSignals(t, env.Dir, "types:\n  verify: {}\n  audit: {}\n")
 	iss, _ := env.Store.Create("Signals", issue.CreateOpts{})
 	env.Repo.Commit("create " + iss.ID)
-	for typ, payload := range map[string]map[string]any{
-		"verify": {"phase": "PASS"},
-		"audit":  {"phase": "BOUNCE", "target": "implementer"},
+	for _, signal := range []struct {
+		typ     string
+		payload map[string]any
+	}{
+		{typ: "verify", payload: map[string]any{"phase": "PASS"}},
+		{typ: "audit", payload: map[string]any{"phase": "BOUNCE", "target": "implementer"}},
 	} {
-		if _, _, err := env.Store.EmitSignal(iss.ID, typ, payload); err != nil {
+		if _, _, err := env.Store.EmitSignal(iss.ID, signal.typ, signal.payload); err != nil {
 			t.Fatal(err)
 		}
 	}
