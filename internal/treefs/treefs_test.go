@@ -2,6 +2,7 @@ package treefs
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -386,6 +387,81 @@ func TestCASConflict(t *testing.T) {
 	}
 	if !errors.Is(err, ErrRefMoved) {
 		t.Fatalf("expected ErrRefMoved, got: %v", err)
+	}
+}
+
+func TestConcurrentCommitsRetryWithoutLosingFiles(t *testing.T) {
+	const writers = 8
+	dir := initTestRepo(t)
+
+	// Open every handle before releasing any writer so their first attempts all
+	// use the same base ref and exercise the CAS conflict path.
+	handles := make([]*TreeFS, writers)
+	for i := range handles {
+		var err error
+		handles[i], err = Open(dir, "refs/heads/beadwork")
+		if err != nil {
+			t.Fatalf("Open writer %d: %v", i, err)
+		}
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, writers)
+	conflicts := make(chan int, writers)
+	for i, initial := range handles {
+		go func() {
+			<-start
+			tfs := initial
+			conflictCount := 0
+			for {
+				name := fmt.Sprintf("concurrent-%d.txt", i)
+				tfs.WriteFile(name, []byte(name))
+				err := tfs.Commit(fmt.Sprintf("writer %d", i))
+				if err == nil {
+					conflicts <- conflictCount
+					errs <- nil
+					return
+				}
+				if !errors.Is(err, ErrRefMoved) {
+					errs <- fmt.Errorf("writer %d commit: %w", i, err)
+					return
+				}
+				conflictCount++
+				tfs, err = Open(dir, "refs/heads/beadwork")
+				if err != nil {
+					errs <- fmt.Errorf("reopen writer %d: %w", i, err)
+					return
+				}
+			}
+		}()
+	}
+	close(start)
+
+	totalConflicts := 0
+	for range writers {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+		totalConflicts += <-conflicts
+	}
+	if totalConflicts == 0 {
+		t.Fatal("concurrent writers observed no ErrRefMoved conflicts")
+	}
+
+	final, err := Open(dir, "refs/heads/beadwork")
+	if err != nil {
+		t.Fatalf("Open final tree: %v", err)
+	}
+	for i := range writers {
+		name := fmt.Sprintf("concurrent-%d.txt", i)
+		data, err := final.ReadFile(name)
+		if err != nil {
+			t.Errorf("ReadFile %s: %v", name, err)
+			continue
+		}
+		if string(data) != name {
+			t.Errorf("ReadFile %s = %q, want %q", name, data, name)
+		}
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -18,6 +19,12 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 )
+
+// refUpdateMu serializes the read-compare-set sequence used to update refs.
+// go-git does not provide an atomic compare-and-swap operation, so separate
+// Repository handles in this process must share this lock. This intentionally
+// does not provide cross-process atomicity.
+var refUpdateMu sync.Mutex
 
 // DirEntry represents a single entry returned by ReadDir.
 type DirEntry struct {
@@ -459,6 +466,9 @@ func (t *TreeFS) Commit(msg string) error {
 // casUpdateRef atomically updates the ref to point to newHash, but only if
 // the ref currently points to t.baseRef (or doesn't exist if baseRef is zero).
 func (t *TreeFS) casUpdateRef(newHash plumbing.Hash) error {
+	refUpdateMu.Lock()
+	defer refUpdateMu.Unlock()
+
 	storer := t.repo.Storer
 
 	// Read current ref
