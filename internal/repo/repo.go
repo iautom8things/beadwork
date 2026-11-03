@@ -76,14 +76,29 @@ func FindRepoAt(dir string) (*Repo, error) {
 	}
 
 	repoDir := filepath.Dir(gitDir)
-	goRepo, err := openGitRepo(repoDir)
-	if err != nil {
-		return nil, fmt.Errorf("open repo: %w", err)
-	}
-
-	tfs, err := treefs.OpenFromRepo(goRepo, refLocal)
-	if err != nil {
-		return nil, fmt.Errorf("open treefs: %w", err)
+	var tfs *treefs.TreeFS
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			raceBackoff(gitDir, attempt)
+		}
+		goRepo, err := openGitRepo(repoDir)
+		if err != nil {
+			return nil, fmt.Errorf("open repo: %w", err)
+		}
+		tfs, err = treefs.OpenFromRepo(goRepo, refLocal)
+		if err == nil && tfs.HasRef() {
+			// Version and prefix come from .bwconfig; a racing read would
+			// silently report version 0 and a derived prefix.
+			if _, rerr := tfs.ReadFile(".bwconfig"); IsObjectStoreRace(rerr) {
+				err = rerr
+			}
+		}
+		if err == nil {
+			break
+		}
+		if !IsObjectStoreRace(err) || attempt+1 >= raceAttempts {
+			return nil, fmt.Errorf("open treefs: %w", err)
+		}
 	}
 
 	r := &Repo{
@@ -548,7 +563,30 @@ func (r *Repo) Sync(resolve RemoteResolver) (status string, replayed []string, e
 		return "no remote configured", nil, nil
 	}
 
-	return r.syncTo(remotes[0])
+	// A push can also lose to another clone pushing between our fetch and
+	// push; the next attempt fetches that commit and merges it.
+	for attempt := 0; ; attempt++ {
+		err = r.RetryObjectStoreRace(raceAttempts, func() error {
+			var serr error
+			status, replayed, serr = r.syncTo(remotes[0])
+			return serr
+		})
+		if err == nil || !isPushRejected(err) || attempt+1 >= raceAttempts {
+			return status, replayed, err
+		}
+		raceBackoff(r.GitDir, attempt+1)
+		if _, rerr := r.Reopen(); rerr != nil {
+			return "", nil, rerr
+		}
+	}
+}
+
+// isPushRejected reports whether a push failed because the remote branch
+// moved after our fetch.
+func isPushRejected(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "non-fast-forward") || strings.Contains(msg, "[rejected]") ||
+		strings.Contains(msg, "fetch first")
 }
 
 func (r *Repo) syncTo(remote string) (string, []string, error) {
@@ -697,11 +735,13 @@ var errReopenAfterFetch = errors.New("reopen after fetch")
 // the freshly-fetched packfiles and refs are visible — go-git would otherwise
 // keep serving stale object and ref caches.
 func (r *Repo) fetch(remoteName string, refSpec config.RefSpec) error {
-	if _, err := execGit(r.RepoDir(), "fetch", remoteName, string(refSpec)); err != nil {
+	// Keep git's auto-maintenance in the foreground: a detached repack started
+	// by this fetch would rewrite packs while go-git walks them (issue #149).
+	if _, err := execGit(r.RepoDir(), "-c", "maintenance.autoDetach=false", "fetch", remoteName, string(refSpec)); err != nil {
 		return err
 	}
 	if _, err := r.Reopen(); err != nil {
-		return fmt.Errorf("%w: %s", errReopenAfterFetch, err)
+		return fmt.Errorf("%w: %w", errReopenAfterFetch, err)
 	}
 	return nil
 }

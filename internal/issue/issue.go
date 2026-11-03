@@ -59,8 +59,10 @@ type Store struct {
 	// keeps them in the ODB. See docs/design.md for replay semantics.
 	SourceHash plumbing.Hash
 
-	cache map[string]*Issue
-	idSet map[string]bool // lazily populated on first resolveID/ExistingIDs call
+	cache     map[string]*Issue
+	idSet     map[string]bool // lazily populated on first resolveID/ExistingIDs call
+	idErr     error           // object-store race hit while listing idSet
+	committed bool            // a Commit has persisted this run
 }
 
 // Commit persists pending mutations with the given intent message.
@@ -73,8 +75,16 @@ func (s *Store) Commit(intent string) error {
 		fmt.Fprintf(os.Stderr, "[dry-run] would commit: %s\n", intent)
 		return nil
 	}
-	return s.Committer.Commit(intent)
+	if err := s.Committer.Commit(intent); err != nil {
+		return err
+	}
+	s.committed = true
+	return nil
 }
+
+// Committed reports whether any Commit has persisted through this store, so
+// callers know whether re-running a failed command could apply it twice.
+func (s *Store) Committed() bool { return s.committed }
 
 // ClearCache discards all cached issues and the lazy ID set.
 // Call after operations that change the underlying TreeFS externally
@@ -82,6 +92,7 @@ func (s *Store) Commit(intent string) error {
 func (s *Store) ClearCache() {
 	s.cache = nil
 	s.idSet = nil
+	s.idErr = nil
 }
 
 // Refresh reloads the underlying TreeFS from the current ref and clears

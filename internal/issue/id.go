@@ -6,6 +6,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/jallum/beadwork/internal/treefs"
 )
 
 const base36 = "0123456789abcdefghijklmnopqrstuvwxyz"
@@ -80,8 +82,13 @@ func (s *Store) ensureIDSet() {
 	if s.idSet != nil {
 		return
 	}
-	s.idSet = make(map[string]bool)
 	entries, err := s.FS.ReadDir("issues")
+	if treefs.IsObjectStoreRace(err) {
+		s.idErr = err // leave idSet unset so a retry lists again
+		return
+	}
+	s.idErr = nil
+	s.idSet = make(map[string]bool)
 	if err != nil {
 		return
 	}
@@ -119,6 +126,9 @@ func (s *Store) ExistingIDs() map[string]bool {
 
 func (s *Store) resolveID(partial string) (string, error) {
 	s.ensureIDSet()
+	if s.idErr != nil {
+		return "", fmt.Errorf("list issues: %w", s.idErr)
+	}
 	// Exact match is the fast path.
 	if s.idSet[partial] {
 		return partial, nil

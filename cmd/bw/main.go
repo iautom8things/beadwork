@@ -9,6 +9,7 @@ import (
 	"github.com/jallum/beadwork/internal/issue"
 	"github.com/jallum/beadwork/internal/registry"
 	"github.com/jallum/beadwork/internal/repo"
+	"github.com/jallum/beadwork/internal/treefs"
 	"golang.org/x/term"
 )
 
@@ -123,6 +124,16 @@ func main() {
 	originalCfg := cfg
 
 	newCfg, err := c.Run(store, args, w, cfg)
+	for attempt := 1; err != nil && attempt < raceRunAttempts && retryableRace(store, err); attempt++ {
+		// Nothing was committed, so running the command again cannot apply
+		// it twice. Wait out the repack and read through a fresh handle.
+		waitForMaintenance(store)
+		if rerr := store.ReopenFS(); rerr != nil {
+			err = rerr
+			continue
+		}
+		newCfg, err = c.Run(store, args, w, cfg)
+	}
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -169,4 +180,12 @@ func extractDirFlag(cfg *config.Config, args []string) []string {
 		}
 	}
 	return out
+}
+
+// raceRunAttempts bounds how often main runs a command that failed with an
+// object-store race before reporting the error.
+const raceRunAttempts = 3
+
+func retryableRace(store *issue.Store, err error) bool {
+	return store != nil && !store.Committed() && treefs.IsObjectStoreRace(err)
 }

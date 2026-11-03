@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jallum/beadwork/internal/issue"
+	"github.com/jallum/beadwork/internal/repo"
 	"github.com/jallum/beadwork/internal/treefs"
 )
 
@@ -41,16 +42,32 @@ func commitWithRetry(store *issue.Store, maxRetries int, apply func() (intent st
 		if attempt > 0 {
 			sleepBackoff(attempt)
 			if err := store.ReopenFS(); err != nil {
+				if treefs.IsObjectStoreRace(err) {
+					commitErr = err
+					waitForMaintenance(store)
+					continue
+				}
 				return fmt.Errorf("reopen after conflict: %w", err)
 			}
 		}
 		intent, aerr := apply()
 		if aerr != nil {
-			return aerr
+			if !treefs.IsObjectStoreRace(aerr) {
+				return aerr
+			}
+			commitErr = aerr
+			waitForMaintenance(store)
+			continue
 		}
 		commitErr = store.Commit(intent)
 		if commitErr == nil {
 			return nil
+		}
+		if treefs.IsObjectStoreRace(commitErr) {
+			// A concurrent repack pruned an object or its fan-out directory
+			// under go-git; the next attempt reopens and writes it again.
+			waitForMaintenance(store)
+			continue
 		}
 		if !errors.Is(commitErr, treefs.ErrRefMoved) {
 			return fmt.Errorf("commit failed: %w", commitErr)
@@ -70,4 +87,12 @@ func sleepBackoff(attempt int) {
 	// retries when several writers collide at the same instant.
 	jittered := time.Duration(rand.Int63n(int64(d) + 1))
 	time.Sleep(jittered)
+}
+
+// waitForMaintenance blocks while git maintenance is repacking the store's
+// repository, so the retry after an object-store race reads settled packs.
+func waitForMaintenance(store *issue.Store) {
+	if r, ok := store.Committer.(*repo.Repo); ok {
+		r.WaitForMaintenance()
+	}
 }

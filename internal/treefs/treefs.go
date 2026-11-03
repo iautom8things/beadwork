@@ -168,6 +168,9 @@ func (t *TreeFS) ReadFile(p string) ([]byte, error) {
 	}
 	entry, err := t.base.FindEntry(p)
 	if err != nil {
+		if IsObjectStoreRace(err) {
+			return nil, fmt.Errorf("read %s: %w", p, err)
+		}
 		return nil, fmt.Errorf("file not found: %s", p)
 	}
 	if entry.Mode == filemode.Dir {
@@ -233,6 +236,10 @@ func (t *TreeFS) ReadDir(p string) ([]DirEntry, error) {
 			}
 		} else {
 			subtree, err := t.base.Tree(p)
+			if IsObjectStoreRace(err) {
+				// An empty listing here would read as "no issues".
+				return nil, fmt.Errorf("read dir %s: %w", p, err)
+			}
 			if err == nil {
 				for _, e := range subtree.Entries {
 					entries[e.Name] = DirEntry{
@@ -352,11 +359,17 @@ func (t *TreeFS) Stat(p string) (FileInfo, error) {
 	if t.base != nil {
 		// Check if it's a file
 		entry, err := t.base.FindEntry(p)
+		if IsObjectStoreRace(err) {
+			return FileInfo{}, fmt.Errorf("stat %s: %w", p, err)
+		}
 		if err == nil {
 			if entry.Mode == filemode.Dir {
 				return FileInfo{name: path.Base(p), isDir: true}, nil
 			}
 			blob, err := t.repo.BlobObject(entry.Hash)
+			if IsObjectStoreRace(err) {
+				return FileInfo{}, fmt.Errorf("stat %s: %w", p, err)
+			}
 			if err == nil {
 				return FileInfo{name: path.Base(p), size: blob.Size, isDir: false}, nil
 			}

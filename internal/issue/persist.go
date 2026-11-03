@@ -3,6 +3,8 @@ package issue
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/jallum/beadwork/internal/treefs"
 )
 
 func (s *Store) readIssue(id string) (*Issue, error) {
@@ -13,6 +15,9 @@ func (s *Store) readIssue(id string) (*Issue, error) {
 	}
 	data, err := s.FS.ReadFile("issues/" + id + ".json")
 	if err != nil {
+		if treefs.IsObjectStoreRace(err) {
+			return nil, fmt.Errorf("read issue %s: %w", id, err)
+		}
 		return nil, fmt.Errorf("issue %s not found", id)
 	}
 	var issue Issue
