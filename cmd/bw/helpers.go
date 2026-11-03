@@ -156,8 +156,9 @@ func ParseArgs(raw []string, valueFlags []string, boolFlags []string) (Args, err
 		}
 
 		// A bare "-" is a positional (stdin sentinel); so is any token that
-		// does not begin with "-".
-		if tok == "-" || !strings.HasPrefix(tok, "-") {
+		// does not begin with "-", and any token holding whitespace: no flag
+		// name does, while a body such as "- first bullet" always does.
+		if tok == "-" || !strings.HasPrefix(tok, "-") || strings.ContainsAny(tok, " \t\r\n") {
 			a.pos = append(a.pos, raw[i])
 			continue
 		}
