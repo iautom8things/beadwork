@@ -145,6 +145,22 @@ func TestParseArgsBareDashIsPositional(t *testing.T) {
 	}
 }
 
+func TestParseArgsDashLeadingTextIsPositional(t *testing.T) {
+	// Markdown bullets start with "-" but hold whitespace, which no flag does.
+	body := "- first bullet\n- second"
+	a, err := ParseArgs([]string{"id", body, "- one line"}, nil, []string{"--json"})
+	if err != nil {
+		t.Fatalf("dash-leading text should be positional, got error: %v", err)
+	}
+	pos := a.Pos()
+	if len(pos) != 3 || pos[1] != body || pos[2] != "- one line" {
+		t.Errorf("pos = %q, want [id %q %q]", pos, body, "- one line")
+	}
+	if _, err := ParseArgs([]string{"id", "-m"}, nil, nil); err == nil {
+		t.Error("a bare -m must still be rejected as an unknown flag")
+	}
+}
+
 func TestParseArgsDoubleDashEndsFlagParsing(t *testing.T) {
 	// Everything after "--" is positional, even flag-looking tokens — the
 	// escape hatch for bodies/values that legitimately start with a dash.
